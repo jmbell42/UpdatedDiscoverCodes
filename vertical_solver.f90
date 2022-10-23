@@ -1060,6 +1060,11 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
   real, dimension(0:nAlts,1:nSpecies) :: MZero
   real, dimension(0:nAlts,1:nSpecies) :: FA
 
+  ! Variables for the Species Mach Number
+  real, dimension(0:nAlts,1:nSpecies) :: SpeciesMeanCS
+  real, dimension(0:nAlts,1:nSpecies) :: SpeciesLiouCSLeft, SpeciesLiouCSRight
+  real, dimension(0:nAlts,1:nSpecies) :: SpeciesLiouEnthalpyLeft, SpeciesLiouEnthalpyRight
+
   ! Mach Number Polynomials 
   ! First Order Polynomial
   real, dimension(0:nAlts,1:nSpecies) :: MF1P_Left
@@ -1082,6 +1087,14 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
   real, dimension(0:nAlts,1:nSpecies) :: NumericalPressure
   ! Numerical Velocity
   real, dimension(0:nAlts) :: BulkNumericalVelocity
+  ! PSI Function 
+  real, dimension(0:nAlts,1:nSpecies) :: PsiP_Left, PsiN_Right
+  ! Chen [2022], g(M) function
+  real, dimension(0:nAlts,1:nSpecies) :: gMfuncS
+  real, dimension(0:nAlts,1:nSpecies) :: kL, kR
+  integer :: jAlt
+  real :: DeltaPU, DeltaPU_P1, DeltaPU_M1
+  real :: DeltaMU, DeltaMU_P1, DeltaMU_M1
 
 !  ! BEGIN SETTING UP VARIABLES
   ! Basic Geometry of the Grid
@@ -1209,10 +1222,54 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
       MeanCS(iAlt) = min(LiouCSLeft(iAlt), LiouCSRight(iAlt))
   enddo 
 
+  ! Species-Specific Enthalpy
+  do iAlt = 0, nAlts 
+    do iSpecies = 1, nSpecies 
+
+       SpeciesLiouEnthalpyLeft(iAlt,iSpecies) = &
+            0.5*(VelLeft(iAlt,iSpecies)**2.0 + &
+                 VelGDLeft(iAlt,iEast_)**2.0 + &
+                 VelGDLeft(iAlt,iNorth_)**2.0) + &
+            (GammaLeft(iAlt)/(GammaLeft(iAlt) - 1.0))*&
+            PressureSLeft(iAlt,iSpecies)/RhoSLeft(iAlt,iSpecies)
+
+       SpeciesLiouEnthalpyRight(iAlt,iSpecies) = &
+            0.5*(VelRight(iAlt,iSpecies)**2.0 + &
+                 VelGDRight(iAlt,iEast_)**2.0 + &
+                 VelGDRight(iAlt,iNorth_)**2.0) + &
+            (GammaRight(iAlt)/(GammaRight(iAlt) - 1.0))*&
+            PressureSRight(iAlt,iSpecies)/RhoSRight(iAlt,iSpecies)
+
+    enddo !iSpecies = 1, nSpecies 
+  enddo !iAlt = 0, nAlts 
+
+  do iAlt = 0, nAlts
+    do iSpecies = 1, nSpecies 
+      SubCs = sqrt(2.0*( (GammaLeft(iAlt) - 1.0 )/(GammaLeft(iAlt) + 1.0)) *&
+           SpeciesLiouEnthalpyLeft(iAlt,iSpecies) )
+      SpeciesLiouCSLeft(iAlt,iSpecies) = (SubCs**2.0)/max(SubCs, VelLeft(iAlt,iSpecies))
+      SubCs = sqrt(2.0*( (GammaRight(iAlt) - 1.0 )/(GammaRight(iAlt) + 1.0)) *&
+           SpeciesLiouEnthalpyRight(iAlt,iSpecies) )
+      SpeciesLiouCSRight(iAlt,iSpecies) = (SubCs**2.0)/max(SubCs, VelRight(iAlt,iSpecies))
+ 
+      SpeciesMeanCS(iAlt,iSpecies) = min(SpeciesLiouCSLeft(iAlt,iSpecies), SpeciesLiouCSRight(iAlt,iSpecies))
+    enddo !iSpecies = 1, nSpecies 
+  enddo 
+
   do iSpecies = 1, nSpecies
      do iAlt = 0, nAlts
-       !real :: ZVar, VL, CL, VR, CR
-        CBar = MeanCS(iAlt)
+        ! USing Bulk Variables
+!        CBar = MeanCS(iAlt)
+!        VL =  VelLeft(iAlt,iSpecies)
+!        VR = VelRight(iAlt,iSpecies)
+!        ML = VL/CBar
+!        MR = VR/CBar
+!        ZVar = min(1.0, max(ML,MR))
+!        ! New Left and Right States
+!         VelLeft(iAlt,iSpecies) = 0.5*(VL + VR) + 0.5*ZVar*(VL - VR)
+!        VelRight(iAlt,iSpecies) = 0.5*(VL + VR) + 0.5*ZVar*(VR - VL)
+
+        CBar = SpeciesMeanCS(iAlt,iSpecies)
         VL =  VelLeft(iAlt,iSpecies)
         VR = VelRight(iAlt,iSpecies)
         ML = VL/CBar
@@ -1221,6 +1278,7 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
         ! New Left and Right States
          VelLeft(iAlt,iSpecies) = 0.5*(VL + VR) + 0.5*ZVar*(VL - VR)
         VelRight(iAlt,iSpecies) = 0.5*(VL + VR) + 0.5*ZVar*(VR - VL)
+
      enddo 
   enddo 
 
@@ -1234,18 +1292,25 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
   ! Local Mach Number Variables
   do iAlt = 0, nAlts 
      do iSpecies = 1, nSpecies
+! Bulk Values
+!         MLeft(iAlt,iSpecies) = &
+!            VelLeft(iAlt,iSpecies)/MeanCS(iAlt)
+!
+!         MRight(iAlt,iSpecies) = &
+!            VelRight(iAlt,iSpecies)/MeanCS(iAlt)
+
          MLeft(iAlt,iSpecies) = &
-            VelLeft(iAlt,iSpecies)/MeanCS(iAlt)
+            VelLeft(iAlt,iSpecies)/SpeciesMeanCS(iAlt,iSpecies)
 
          MRight(iAlt,iSpecies) = &
-            VelRight(iAlt,iSpecies)/MeanCS(iAlt)
+            VelRight(iAlt,iSpecies)/SpeciesMeanCS(iAlt,iSpecies)
 
         M2Bar(iAlt,iSpecies) = &
            0.5*(MLeft(iAlt,iSpecies)**2.0 + &
                MRight(iAlt,iSpecies)**2.0 )
 
         M2Zero(iAlt,iSpecies) = &
-              min(1.0, max(M2Bar(iAlt,iSpecies), MInf)) 
+              min(1.0, M2Bar(iAlt,iSpecies))
         MZero(iAlt,iSpecies) = sqrt(M2Zero(iAlt,iSpecies))
 
         FA(iAlt,iSpecies) = &
@@ -1257,9 +1322,21 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
                                 0.25*(MLeft(iAlt,iSpecies)      + 1.0)**2.0 + &
                             LiouBeta*(MLeft(iAlt,iSpecies)**2.0 - 1.0)**2.0 & 
                          )
+          ! Use SLAU2 Version
+          PsiP_Left(iAlt,iSpecies) = &
+             0.25*( (MLeft(iAlt,iSpecies) + 1.0)**2.0)*(2.0 - MLeft(iAlt,iSpecies)) 
        else
           MF4P_Left(iAlt,iSpecies) = &
              0.5*(MLeft(iAlt,iSpecies) + abs(MLeft(iAlt,iSpecies)) )
+
+          if(MLeft(iAlt,iSpecies) .le. 0.0) then
+             PsiP_Left(iAlt,iSpecies) = &
+                0.5*(1.0 + abs(MLeft(iAlt,iSpecies)-MInf)/(MLeft(iAlt,iSpecies) - MInf) )
+          else
+             PsiP_Left(iAlt,iSpecies) = &
+                0.5*(1.0 + abs(MLeft(iAlt,iSpecies)+MInf)/(MInf + MLeft(iAlt,iSpecies)) )
+          endif
+
        endif 
 
        ! Fourth Order Mach Number Polynomial
@@ -1269,33 +1346,51 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
                                -0.25*(MRight(iAlt,iSpecies)      - 1.0)**2.0 - &
                             LiouBeta*(MRight(iAlt,iSpecies)**2.0 - 1.0)**2.0 & 
                          )
+          PsiN_Right(iAlt,iSpecies) = &
+             0.25*( (MRight(iAlt,iSpecies) - 1.0)**2.0)*(2.0 + MRight(iAlt,iSpecies)) 
        else
           MF4N_Right(iAlt,iSpecies) = &
              0.5*(MRight(iAlt,iSpecies) - abs(MRight(iAlt,iSpecies)) )
+
+          if(MRight(iAlt,iSpecies) .le. 0.0) then
+             PsiN_Right(iAlt,iSpecies) = &
+                0.5*(1.0 - abs(MRight(iAlt,iSpecies) - MInf)/(MRight(iAlt,iSpecies) - MInf) )
+          else
+             PsiN_Right(iAlt,iSpecies) = &
+                0.5*(1.0 - abs(MRight(iAlt,iSpecies)+MInf)/(MInf + MRight(iAlt,iSpecies)) )
+          endif
+
        endif 
+
+!  ! Chen [2022], g(M) function
+!  real, dimension(0:nAlts,1:nSpecies) :: gMfuncS
+!  real, dimension(0:nAlts,1:nSpecies) :: kL, kR
 
      enddo 
   enddo 
-  Kp = 0.10             !! Ullrich et al. [2011]
-  Ku = 1.0             !! Ullrich et al. [2011]
+  Kp = 1.0
+  Ku = 1.0
   do iAlt = 0, nAlts
      do iSpecies = 1, nSpecies
       ! Note that this enforces a pressure-type low-mach number variation
-      MachScaling = MZero(iAlt,iSpecies)**3.0
-      LiouKpS(iAlt,iSpecies) = (MachScaling)*Kp
-      LiouKuS(iAlt,iSpecies) = (MachScaling)*Ku
+      MachScaling = MZero(iAlt,iSpecies)**2.0
+      LiouKpS(iAlt,iSpecies) = (MachScaling)
+      ! For Pressure, we need only scale by a single Mach Number
+      MachScaling = MZero(iAlt,iSpecies)**1.0
+      LiouKuS(iAlt,iSpecies) = (MachScaling)
      enddo 
   enddo 
   ! Numerical AUSM Fluxes
   do iSpecies = 1, nSpecies
      do iAlt = 0, nAlts 
-       ModifiedZeta(iAlt,iSpecies) = 1.0
-           MPress(iAlt,iSpecies) = &
-              LiouKpS(iAlt,iSpecies)*max( (1.0 - M2Bar(iAlt,iSpecies)), 0.0)*&
-              (PressureSRight(iAlt, iSpecies) - PressureSLeft(iAlt,iSpecies) )/&
-              ( MeanRhoS(iAlt,iSpecies)*MeanCS(iAlt)*&
-              (FA(iAlt,iSpecies)*MeanCS(iAlt) + &
-              ModifiedZeta(iAlt,iSpecies)*dAlt_F(iAlt+1)/DtIn)  ) 
+! Using Bulk Values
+! Notice that we mimic Chen' [2022] Anti-diffusive Flux scheme
+! WE scale by Ma^2 because delP in a hydrostatic atmosphere scales as ~dr/Hs (Not Mach)
+         MPress(iAlt,iSpecies) = &
+            0.5*LiouKpS(iAlt,iSpecies)*max( (1.0 - sqrt(M2Bar(iAlt,iSpecies))), 0.0)*&
+            (PressureSRight(iAlt, iSpecies) - PressureSLeft(iAlt,iSpecies) )/&
+            ( MeanRhoS(iAlt,iSpecies)*SpeciesMeanCS(iAlt,iSpecies)**2.0)
+
       enddo ! iSpecies
     enddo ! iAlt
 
@@ -1303,17 +1398,25 @@ subroutine calc_all_fluxes_hydro(DtIn, RhoS, PressureS, &
         InterfaceMach(:,iSpecies) =  &
                MF4P_Left(:,iSpecies) + MF4N_Right(:,iSpecies) &
                 - MPress(:,iSpecies)
+! Use Bulk Values
         NumericalVelocity(:,iSpecies) = &
-                 MeanCS(:)*InterfaceMach(:,iSpecies) 
+                 SpeciesMeanCS(:,iSpecies)*InterfaceMach(:,iSpecies) 
     enddo ! iSpecies 
 
  !! NUMERICAL PRESSURE
    do iSpecies = 1, nSpecies
+! Chen/SLAU2/AUSM+-up2 Version
+! Note that Ku uses only the Mach^1 scaling fn
       NumericalPressure(:,iSpecies) = &
-            (MeanPressureS(:,iSpecies) )&
-              - 0.5*LiouKuS(:,iSpecies)*MeanCS(:)*&
-              ( (RhoSRight(:,iSpecies) )*VelRight(:,iSpecies) - &
-                 (RhoSLeft(:,iSpecies) )* VelLeft(:,iSpecies) )
+            ( 0.5*PressureSLeft(:,iSpecies) + &
+              0.5*PressureSRight(:,iSpecies) ) + &
+            0.5*(PsiP_Left(:,iSpecies) - PsiN_Right(:,iSpecies))*&
+            ( PressureSLeft(:,iSpecies) - &
+              PressureSRight(:,iSpecies) ) +   &
+            LiouKuS(iAlt,iSpecies)*max( (1.0 - sqrt(M2Bar(iAlt,iSpecies))), 0.0)*&
+            (PsiP_Left(:,iSpecies) + PsiN_Right(:,iSpecies) - 1.0)*&
+            0.5*( PressureSLeft(:,iSpecies) + PressureSRight(:,iSpecies) ) 
+
    enddo !iSpecies = 1, nSpecies
    do iSpecies = 1, nSpecies
       do iAlt = 0, nAlts 
